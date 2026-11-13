@@ -2,55 +2,60 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 
-// CORS 및 JSON 파싱 설정
 app.use(cors());
 app.use(express.json());
 
-// 가장 최근 발주 데이터를 기억할 메모리 변수
-let latestOrder = null;
+// 주문을 배열로 누적 저장 (서버 메모리에 안전하게 쌓임)
+let orders = [];
 
-// 1. 서버 정상 작동 확인용 루트 경로
 app.get('/', (req, res) => {
     res.send('🍜 양평칼국수 발주 서버가 정상 가동 중입니다!');
 });
 
-// 2. 수신 앱(본점 대시보드)이 5초마다 신규 발주를 체크하는 API (GET)
+// 1. 수신 앱이 체크할 때 가장 최근 주문을 반환하는 API
 app.get('/api/check-order', (req, res) => {
-    if (latestOrder) {
-        res.json({ order: latestOrder });
+    if (orders.length > 0) {
+        // 가장 마지막에 들어온 최신 주문 전달
+        const latestOrder = orders[orders.length - 1];
+        res.json({ order: latestOrder, count: orders.length });
     } else {
-        res.json({ order: null });
+        res.json({ order: null, count: 0 });
     }
 });
 
-// 3. 지점 발주 앱에서 전송 버튼을 누를 때 데이터를 받는 API (POST)
+// 2. 지점에서 발주를 보낼 때 누적 저장하는 API
 app.post('/api/order', (req, res) => {
     const { branch, orderDate, total, details } = req.body;
 
-    // 데이터 유효성 검사
-    if (!branch || !details || total === undefined) {
-        return res.status(400).json({ success: false, message: '필수 데이터(지점, 내용, 총액)가 누락되었습니다.' });
+    if (!branch || !details) {
+        return res.status(400).json({ success: false, message: '필수 데이터가 누락되었습니다.' });
     }
 
-    // 최신 발주 정보 업데이트 (고유 ID 부여)
-    latestOrder = {
-        id: Date.now(),
+    const newOrder = {
+        id: Date.now(), // 고유 ID로 중복 방지
         branch: branch,
         orderDate: orderDate || new Date().toLocaleString(),
         total: Number(total) || 0,
         details: details
     };
 
-    console.log(`[신규 발주 접수 완료] 지점: ${branch} | 총액: ${total}원 | 내용: ${details}`);
+    // 배열에 주문 추가 (최신 것이 맨 뒤로)
+    orders.push(newOrder);
+    
+    // 메모리 과부하 방지용으로 최근 50개까지만 유지
+    if (orders.length > 50) {
+        orders.shift();
+    }
+
+    console.log(`[발주 접수 성공] 지점: ${branch} | 총액: ${total}원`);
     
     res.json({ 
         success: true, 
-        message: '발주가 본점 수신 서버에 성공적으로 접수되었습니다.',
-        order: latestOrder 
+        message: '발주가 정상 접수되었습니다.',
+        order: newOrder 
     });
 });
 
-// 포트 설정 (Render 환경 변수 포트 또는 기본 3000번)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
