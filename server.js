@@ -1,66 +1,57 @@
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
-const admin = require('firebase-admin');
-
 const app = express();
+
+// CORS 및 JSON 파싱 설정
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-// 파이어베이스 어드민 초기화
-try {
-    const serviceAccount = require('./serviceAccountKey.json');
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('파이어베이스 연결 완료');
-} catch (e) {
-    console.error('serviceAccountKey.json 파일을 확인해주세요:', e.message);
-}
-
+// 가장 최근 발주 데이터를 기억할 메모리 변수
 let latestOrder = null;
 
-app.post('/api/send-order', async (req, res) => {
-    const { orderDate, total, details } = req.body;
-    latestOrder = {
-        id: Date.now(),
-        orderDate,
-        total,
-        details: details || '신규 발주가 접수되었습니다.',
-        time: new Date().toLocaleTimeString('ko-KR')
-    };
+// 1. 서버 정상 작동 확인용 루트 경로
+app.get('/', (req, res) => {
+    res.send('🍜 양평칼국수 발주 서버가 정상 가동 중입니다!');
+});
 
-    // 진짜 APK가 구독 중인 'orders' 채널로 백그라운드 상단 바 푸시 발송!
-    const message = {
-        notification: {
-            title: '🚨 양평칼국수 신규 발주 도착!',
-            body: `[${orderDate}] ${details} (합계: ${Number(total).toLocaleString()}원)`
-        },
-        topic: 'orders',
-        android: {
-            priority: 'high',
-            notification: {
-                sound: 'default',
-                channelId: 'order_alert_channel'
-            }
-        }
-    };
+// 2. 수신 앱(본점 대시보드)이 5초마다 신규 발주를 체크하는 API (GET)
+app.get('/api/check-order', (req, res) => {
+    if (latestOrder) {
+        res.json({ order: latestOrder });
+    } else {
+        res.json({ order: null });
+    }
+});
 
-    try {
-        await admin.messaging().send(message);
-        console.log('상단 바 푸시 전송 성공!');
-    } catch (error) {
-        console.error('푸시 전송 실패:', error);
+// 3. 지점 발주 앱에서 전송 버튼을 누를 때 데이터를 받는 API (POST)
+app.post('/api/order', (req, res) => {
+    const { branch, orderDate, total, details } = req.body;
+
+    // 데이터 유효성 검사
+    if (!branch || !details || total === undefined) {
+        return res.status(400).json({ success: false, message: '필수 데이터(지점, 내용, 총액)가 누락되었습니다.' });
     }
 
-    res.json({ success: true });
+    // 최신 발주 정보 업데이트 (고유 ID 부여)
+    latestOrder = {
+        id: Date.now(),
+        branch: branch,
+        orderDate: orderDate || new Date().toLocaleString(),
+        total: Number(total) || 0,
+        details: details
+    };
+
+    console.log(`[신규 발주 접수 완료] 지점: ${branch} | 총액: ${total}원 | 내용: ${details}`);
+    
+    res.json({ 
+        success: true, 
+        message: '발주가 본점 수신 서버에 성공적으로 접수되었습니다.',
+        order: latestOrder 
+    });
 });
 
-app.get('/api/check-order', (req, res) => {
-    res.json({ order: latestOrder });
-});
-
-const PORT = process.env.PORT || 10000;
+// 포트 설정 (Render 환경 변수 포트 또는 기본 3000번)
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`서버가 ${PORT}번 포트에서 작동 중입니다.`);
+    console.log(`Server is running on port ${PORT}`);
 });
